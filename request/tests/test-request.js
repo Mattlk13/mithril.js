@@ -1,17 +1,16 @@
 "use strict"
 
-var o = require("../../ospec/ospec")
+var o = require("ospec")
 var callAsync = require("../../test-utils/callAsync")
 var xhrMock = require("../../test-utils/xhrMock")
 var Request = require("../../request/request")
-var PromisePolyfill = require("../../promise/promise")
 
 o.spec("request", function() {
 	var mock, request, complete
 	o.beforeEach(function() {
 		mock = xhrMock()
 		complete = o.spy()
-		request = Request(mock, PromisePolyfill, complete).request
+		request = Request(mock, complete).request
 	})
 
 	o.spec("success", function() {
@@ -212,6 +211,16 @@ o.spec("request", function() {
 				o(data).deepEquals({a: "/items", b: [{x: "y"}]})
 			}).then(done)
 		})
+		o("works w/ URLSearchParams body", function(done) {
+			mock.$defineRoutes({
+				"POST /item": function(request) {
+					return {status: 200, responseText: JSON.stringify({a: request.url, b: request.body.toString()})}
+				}
+			})
+			request({method: "POST", url: "/item", body: new URLSearchParams({x: "y", z: "w"})}).then(function(data) {
+				o(data).deepEquals({a: "/item", b: "x=y&z=w"})
+			}).then(done)
+		});
 		o("ignores unresolved parameter via GET", function(done) {
 			mock.$defineRoutes({
 				"GET /item/:x": function(request) {
@@ -677,6 +686,57 @@ o.spec("request", function() {
 				o(e instanceof Error).equals(true)
 			}).then(done)
 		})
+		o("rejects on request timeout", function(done) {
+			var timeout = 50
+			var timeToGetItem = timeout + 1
+
+			mock.$defineRoutes({
+				"GET /item": function() {
+					return new Promise(function(resolve) {
+						setTimeout(function() {
+							resolve({status: 200})
+						}, timeToGetItem)
+					})
+				}
+			})
+
+			request({
+				method: "GET", url: "/item",
+				timeout: timeout
+			}).catch(function(e) {
+				o(e instanceof Error).equals(true)
+				o(e.message).equals("Request timed out")
+				o(e.code).equals(0)
+			}).then(function() {
+				done()
+			})
+		})
+		o("does not reject when time to request resource does not exceed timeout", function(done) {
+			var timeout = 50
+			var timeToGetItem = timeout - 1
+			var isRequestRejected = false
+
+			mock.$defineRoutes({
+				"GET /item": function() {
+					return new Promise(function(resolve) {
+						setTimeout(function() {
+							resolve({status: 200})
+						}, timeToGetItem)
+					})
+				}
+			})
+
+			request({
+				method: "GET", url: "/item",
+				timeout: timeout
+			}).catch(function(e) {
+				isRequestRejected = true
+				o(e.message).notEquals("Request timed out")
+			}).then(function() {
+				o(isRequestRejected).equals(false)
+				done()
+			})
+		})
 		o("does not reject on status error code when extract provided", function(done) {
 			mock.$defineRoutes({
 				"GET /item": function() {
@@ -833,7 +893,7 @@ o.spec("request", function() {
 			// if you use the polyfill, as it's based on `setImmediate` (falling
 			// back to `setTimeout`), and promise microtasks are run at higher
 			// priority than either of those.
-			request = Request(mock, Promise, complete).request
+			request = Request(mock, complete).request
 			mock.$defineRoutes({
 				"GET /item": function() {
 					return {status: 200, responseText: "[]"}

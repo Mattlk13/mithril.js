@@ -1,12 +1,13 @@
 "use strict"
 
-var o = require("../ospec/ospec")
+var o = require("ospec")
 var browserMock = require("../test-utils/browserMock")
 var components = require("../test-utils/components")
 
 o.spec("api", function() {
 	var FRAME_BUDGET = Math.floor(1000 / 60)
 	var mock = browserMock(), root
+	mock.setTimeout = setTimeout
 	if (typeof global !== "undefined") {
 		global.window = mock
 		global.requestAnimationFrame = mock.requestAnimationFrame
@@ -59,11 +60,6 @@ o.spec("api", function() {
 	o.spec("m.request", function() {
 		o("works", function() {
 			o(typeof m.request).equals("function") // TODO improve
-		})
-	})
-	o.spec("m.jsonp", function() {
-		o("works", function() {
-			o(typeof m.jsonp).equals("function") // TODO improve
 		})
 	})
 	o.spec("m.render", function() {
@@ -128,8 +124,8 @@ o.spec("api", function() {
 						done()
 					}, FRAME_BUDGET)
 				})
-				o("m.route.set", function(done, timeout) {
-					timeout(100)
+				o("m.route.set", function(done) {
+					o.timeout(100)
 					root = window.document.createElement("div")
 					m.route(root, "/a", {
 						"/:id": createComponent({view: function() {return m("div")}})

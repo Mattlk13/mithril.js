@@ -1,14 +1,21 @@
 "use strict"
 
 var Vnode = require("../render/vnode")
+var df = require("../render/domFor")
+var delayedRemoval = df.delayedRemoval
+var domFor = df.domFor
 
-module.exports = function($window) {
-	var $doc = $window && $window.document
-	var currentRedraw
-
+module.exports = function() {
 	var nameSpace = {
 		svg: "http://www.w3.org/2000/svg",
 		math: "http://www.w3.org/1998/Math/MathML"
+	}
+
+	var currentRedraw
+	var currentRender
+
+	function getDocument(dom) {
+		return dom.ownerDocument;
 	}
 
 	function getNameSpace(vnode) {
@@ -17,7 +24,7 @@ module.exports = function($window) {
 
 	//sanity check to discourage people from doing `vnode.state = ...`
 	function checkState(vnode, original) {
-		if (vnode.state !== original) throw new Error("`vnode.state` must not be modified")
+		if (vnode.state !== original) throw new Error("'vnode.state' must not be modified.")
 	}
 
 	//Note: the hook is passed as the `this` argument to allow proxying the
@@ -35,9 +42,9 @@ module.exports = function($window) {
 
 	// IE11 (at least) throws an UnspecifiedError when accessing document.activeElement when
 	// inside an iframe. Catch and swallow this error, and heavy-handidly return null.
-	function activeElement() {
+	function activeElement(dom) {
 		try {
-			return $doc.activeElement
+			return getDocument(dom).activeElement
 		} catch (e) {
 			return null
 		}
@@ -66,8 +73,8 @@ module.exports = function($window) {
 		else createComponent(parent, vnode, hooks, ns, nextSibling)
 	}
 	function createText(parent, vnode, nextSibling) {
-		vnode.dom = $doc.createTextNode(vnode.children)
-		insertNode(parent, vnode.dom, nextSibling)
+		vnode.dom = getDocument(parent).createTextNode(vnode.children)
+		insertDOM(parent, vnode.dom, nextSibling)
 	}
 	var possibleParents = {caption: "table", thead: "table", tbody: "table", tfoot: "table", tr: "tbody", th: "tr", td: "tr", colgroup: "table", col: "colgroup"}
 	function createHTML(parent, vnode, ns, nextSibling) {
@@ -77,7 +84,7 @@ module.exports = function($window) {
 		//     div.innerHTML = "<td>i</td><td>j</td>"
 		//     console.log(div.innerHTML)
 		// --> "ij", no <td> in sight.
-		var temp = $doc.createElement(possibleParents[match[1]] || "div")
+		var temp = getDocument(parent).createElement(possibleParents[match[1]] || "div")
 		if (ns === "http://www.w3.org/2000/svg") {
 			temp.innerHTML = "<svg xmlns=\"http://www.w3.org/2000/svg\">" + vnode.children + "</svg>"
 			temp = temp.firstChild
@@ -87,24 +94,22 @@ module.exports = function($window) {
 		vnode.dom = temp.firstChild
 		vnode.domSize = temp.childNodes.length
 		// Capture nodes to remove, so we don't confuse them.
-		vnode.instance = []
-		var fragment = $doc.createDocumentFragment()
+		var fragment = getDocument(parent).createDocumentFragment()
 		var child
 		while (child = temp.firstChild) {
-			vnode.instance.push(child)
 			fragment.appendChild(child)
 		}
-		insertNode(parent, fragment, nextSibling)
+		insertDOM(parent, fragment, nextSibling)
 	}
 	function createFragment(parent, vnode, hooks, ns, nextSibling) {
-		var fragment = $doc.createDocumentFragment()
+		var fragment = getDocument(parent).createDocumentFragment()
 		if (vnode.children != null) {
 			var children = vnode.children
 			createNodes(fragment, children, 0, children.length, hooks, null, ns)
 		}
 		vnode.dom = fragment.firstChild
 		vnode.domSize = fragment.childNodes.length
-		insertNode(parent, fragment, nextSibling)
+		insertDOM(parent, fragment, nextSibling)
 	}
 	function createElement(parent, vnode, hooks, ns, nextSibling) {
 		var tag = vnode.tag
@@ -114,21 +119,17 @@ module.exports = function($window) {
 		ns = getNameSpace(vnode) || ns
 
 		var element = ns ?
-			is ? $doc.createElementNS(ns, tag, {is: is}) : $doc.createElementNS(ns, tag) :
-			is ? $doc.createElement(tag, {is: is}) : $doc.createElement(tag)
+			is ? getDocument(parent).createElementNS(ns, tag, {is: is}) : getDocument(parent).createElementNS(ns, tag) :
+			is ? getDocument(parent).createElement(tag, {is: is}) : getDocument(parent).createElement(tag)
 		vnode.dom = element
 
 		if (attrs != null) {
 			setAttrs(vnode, attrs, ns)
 		}
 
-		insertNode(parent, element, nextSibling)
+		insertDOM(parent, element, nextSibling)
 
 		if (!maybeSetContentEditable(vnode)) {
-			if (vnode.text != null) {
-				if (vnode.text !== "") element.textContent = vnode.text
-				else vnode.children = [Vnode("#", undefined, undefined, vnode.text, undefined, undefined)]
-			}
 			if (vnode.children != null) {
 				var children = vnode.children
 				createNodes(element, children, 0, children.length, hooks, null, ns)
@@ -266,11 +267,6 @@ module.exports = function($window) {
 	// this is not the case if the node moved (second and fourth part of the diff algo). We move
 	// the old DOM nodes before updateNode runs because it enables us to use the cached `nextSibling`
 	// variable rather than fetching it using `getNextSibling()`.
-	//
-	// The fourth part of the diff currently inserts nodes unconditionally, leading to issues
-	// like #1791 and #1999. We need to be smarter about those situations where adjascent old
-	// nodes remain together in the new list in a way that isn't covered by parts one and
-	// three of the diff algo.
 
 	function updateNodes(parent, old, vnodes, hooks, nextSibling, ns) {
 		if (old === vnodes || old == null && vnodes == null) return
@@ -282,7 +278,6 @@ module.exports = function($window) {
 			var start = 0, oldStart = 0
 			if (!isOldKeyed) while (oldStart < old.length && old[oldStart] == null) oldStart++
 			if (!isKeyed) while (start < vnodes.length && vnodes[start] == null) start++
-			if (isKeyed === null && isOldKeyed == null) return // both lists are full of nulls
 			if (isOldKeyed !== isKeyed) {
 				removeNodes(parent, old, oldStart, old.length)
 				createNodes(parent, vnodes, start, vnodes.length, hooks, nextSibling, ns)
@@ -329,9 +324,9 @@ module.exports = function($window) {
 					if (start === end) break
 					if (o.key !== ve.key || oe.key !== v.key) break
 					topSibling = getNextSibling(old, oldStart, nextSibling)
-					moveNodes(parent, oe, topSibling)
+					moveDOM(parent, oe, topSibling)
 					if (oe !== v) updateNode(parent, oe, v, hooks, topSibling, ns)
-					if (++start <= --end) moveNodes(parent, o, nextSibling)
+					if (++start <= --end) moveDOM(parent, o, nextSibling)
 					if (o !== ve) updateNode(parent, o, ve, hooks, nextSibling, ns)
 					if (ve.dom != null) nextSibling = ve.dom
 					oldStart++; oldEnd--
@@ -383,7 +378,7 @@ module.exports = function($window) {
 								if (oldIndices[i-start] === -1) createNode(parent, v, hooks, ns, nextSibling)
 								else {
 									if (lisIndices[li] === i - start) li--
-									else moveNodes(parent, v, nextSibling)
+									else moveDOM(parent, v, nextSibling)
 								}
 								if (v.dom != null) nextSibling = vnodes[i].dom
 							}
@@ -431,13 +426,12 @@ module.exports = function($window) {
 	}
 	function updateHTML(parent, old, vnode, ns, nextSibling) {
 		if (old.children !== vnode.children) {
-			removeHTML(parent, old)
+			removeDOM(parent, old, undefined)
 			createHTML(parent, vnode, ns, nextSibling)
 		}
 		else {
 			vnode.dom = old.dom
 			vnode.domSize = old.domSize
-			vnode.instance = old.instance
 		}
 	}
 	function updateFragment(parent, old, vnode, hooks, nextSibling, ns) {
@@ -461,21 +455,10 @@ module.exports = function($window) {
 
 		if (vnode.tag === "textarea") {
 			if (vnode.attrs == null) vnode.attrs = {}
-			if (vnode.text != null) {
-				vnode.attrs.value = vnode.text //FIXME handle multiple children
-				vnode.text = undefined
-			}
 		}
 		updateAttrs(vnode, old.attrs, vnode.attrs, ns)
 		if (!maybeSetContentEditable(vnode)) {
-			if (old.text != null && vnode.text != null && vnode.text !== "") {
-				if (old.text.toString() !== vnode.text.toString()) old.dom.firstChild.nodeValue = vnode.text
-			}
-			else {
-				if (old.text != null) old.children = [Vnode("#", undefined, undefined, old.text, undefined, old.dom.firstChild)]
-				if (vnode.text != null) vnode.children = [Vnode("#", undefined, undefined, vnode.text, undefined, undefined)]
-				updateNodes(element, old.children, vnode.children, hooks, null, ns)
-			}
+			updateNodes(element, old.children, vnode.children, hooks, null, ns)
 		}
 	}
 	function updateComponent(parent, old, vnode, hooks, nextSibling, ns) {
@@ -514,7 +497,7 @@ module.exports = function($window) {
 	// takes a list of unique numbers (-1 is special and can
 	// occur multiple times) and returns an array with the indices
 	// of the items that are part of the longest increasing
-	// subsequece
+	// subsequence
 	var lisTemp = []
 	function makeLisIndices(a) {
 		var result = [0]
@@ -564,46 +547,22 @@ module.exports = function($window) {
 		return nextSibling
 	}
 
-	// This covers a really specific edge case:
-	// - Parent node is keyed and contains child
-	// - Child is removed, returns unresolved promise in `onbeforeremove`
-	// - Parent node is moved in keyed diff
-	// - Remaining children still need moved appropriately
-	//
-	// Ideally, I'd track removed nodes as well, but that introduces a lot more
-	// complexity and I'm not exactly interested in doing that.
-	function moveNodes(parent, vnode, nextSibling) {
-		var frag = $doc.createDocumentFragment()
-		moveChildToFrag(parent, frag, vnode)
-		insertNode(parent, frag, nextSibling)
-	}
-	function moveChildToFrag(parent, frag, vnode) {
-		// Dodge the recursion overhead in a few of the most common cases.
-		while (vnode.dom != null && vnode.dom.parentNode === parent) {
-			if (typeof vnode.tag !== "string") {
-				vnode = vnode.instance
-				if (vnode != null) continue
-			} else if (vnode.tag === "<") {
-				for (var i = 0; i < vnode.instance.length; i++) {
-					frag.appendChild(vnode.instance[i])
-				}
-			} else if (vnode.tag !== "[") {
-				// Don't recurse for text nodes *or* elements, just fragments
-				frag.appendChild(vnode.dom)
-			} else if (vnode.children.length === 1) {
-				vnode = vnode.children[0]
-				if (vnode != null) continue
+	// This handles fragments with zombie children (removed from vdom, but persisted in DOM through onbeforeremove)
+	function moveDOM(parent, vnode, nextSibling) {
+		if (vnode.dom != null) {
+			var target
+			if (vnode.domSize == null) {
+				// don't allocate for the common case
+				target = vnode.dom
 			} else {
-				for (var i = 0; i < vnode.children.length; i++) {
-					var child = vnode.children[i]
-					if (child != null) moveChildToFrag(parent, frag, child)
-				}
+				target = getDocument(parent).createDocumentFragment()
+				for (var dom of domFor(vnode)) target.appendChild(dom)
 			}
-			break
+			insertDOM(parent, target, nextSibling)
 		}
 	}
 
-	function insertNode(parent, dom, nextSibling) {
+	function insertDOM(parent, dom, nextSibling) {
 		if (nextSibling != null) parent.insertBefore(dom, nextSibling)
 		else parent.appendChild(dom)
 	}
@@ -618,7 +577,7 @@ module.exports = function($window) {
 			var content = children[0].children
 			if (vnode.dom.innerHTML !== content) vnode.dom.innerHTML = content
 		}
-		else if (vnode.text != null || children != null && children.length !== 0) throw new Error("Child node of a contenteditable must be trusted")
+		else if (children != null && children.length !== 0) throw new Error("Child node of a contenteditable must be trusted.")
 		return true
 	}
 
@@ -649,65 +608,54 @@ module.exports = function($window) {
 			}
 		}
 		checkState(vnode, original)
-
+		var generation
 		// If we can, try to fast-path it and avoid all the overhead of awaiting
 		if (!mask) {
 			onremove(vnode)
-			removeChild(parent, vnode)
+			removeDOM(parent, vnode, generation)
 		} else {
+			generation = currentRender
+			for (var dom of domFor(vnode)) delayedRemoval.set(dom, generation)
 			if (stateResult != null) {
-				var next = function () {
+				stateResult.finally(function () {
 					// eslint-disable-next-line no-bitwise
-					if (mask & 1) { mask &= 2; if (!mask) reallyRemove() }
-				}
-				stateResult.then(next, next)
+					if (mask & 1) {
+						// eslint-disable-next-line no-bitwise
+						mask &= 2
+						if (!mask) {
+							checkState(vnode, original)
+							onremove(vnode)
+							removeDOM(parent, vnode, generation)
+						}
+					}
+				})
 			}
 			if (attrsResult != null) {
-				var next = function () {
+				attrsResult.finally(function () {
 					// eslint-disable-next-line no-bitwise
-					if (mask & 2) { mask &= 1; if (!mask) reallyRemove() }
-				}
-				attrsResult.then(next, next)
-			}
-		}
-
-		function reallyRemove() {
-			checkState(vnode, original)
-			onremove(vnode)
-			removeChild(parent, vnode)
-		}
-	}
-	function removeHTML(parent, vnode) {
-		for (var i = 0; i < vnode.instance.length; i++) {
-			parent.removeChild(vnode.instance[i])
-		}
-	}
-	function removeChild(parent, vnode) {
-		// Dodge the recursion overhead in a few of the most common cases.
-		while (vnode.dom != null && vnode.dom.parentNode === parent) {
-			if (typeof vnode.tag !== "string") {
-				vnode = vnode.instance
-				if (vnode != null) continue
-			} else if (vnode.tag === "<") {
-				removeHTML(parent, vnode)
-			} else {
-				if (vnode.tag !== "[") {
-					parent.removeChild(vnode.dom)
-					if (!Array.isArray(vnode.children)) break
-				}
-				if (vnode.children.length === 1) {
-					vnode = vnode.children[0]
-					if (vnode != null) continue
-				} else {
-					for (var i = 0; i < vnode.children.length; i++) {
-						var child = vnode.children[i]
-						if (child != null) removeChild(parent, child)
+					if (mask & 2) {
+						// eslint-disable-next-line no-bitwise
+						mask &= 1
+						if (!mask) {
+							checkState(vnode, original)
+							onremove(vnode)
+							removeDOM(parent, vnode, generation)
+						}
 					}
-				}
+				})
 			}
-			break
 		}
 	}
+	function removeDOM(parent, vnode, generation) {
+		if (vnode.dom == null) return
+		if (vnode.domSize == null) {
+			// don't allocate for the common case
+			if (delayedRemoval.get(vnode.dom) === generation) parent.removeChild(vnode.dom)
+		} else {
+			for (var dom of domFor(vnode, {generation})) parent.removeChild(dom)
+		}
+	}
+
 	function onremove(vnode) {
 		if (typeof vnode.tag !== "string" && typeof vnode.state.onremove === "function") callHook.call(vnode.state.onremove, vnode)
 		if (vnode.attrs && typeof vnode.attrs.onremove === "function") callHook.call(vnode.attrs.onremove, vnode)
@@ -726,12 +674,18 @@ module.exports = function($window) {
 
 	//attrs
 	function setAttrs(vnode, attrs, ns) {
+		// If you assign an input type that is not supported by IE 11 with an assignment expression, an error will occur.
+		//
+		// Also, the DOM does things to inputs based on the value, so it needs set first.
+		// See: https://github.com/MithrilJS/mithril.js/issues/2622
+		if (vnode.tag === "input" && attrs.type != null) vnode.dom.setAttribute("type", attrs.type)
+		var isFileInput = attrs != null && vnode.tag === "input" && attrs.type === "file"
 		for (var key in attrs) {
-			setAttr(vnode, key, null, attrs[key], ns)
+			setAttr(vnode, key, null, attrs[key], ns, isFileInput)
 		}
 	}
-	function setAttr(vnode, key, old, value, ns) {
-		if (key === "key" || key === "is" || value == null || isLifecycleMethod(key) || (old === value && !isFormAttribute(vnode, key)) && typeof value !== "object") return
+	function setAttr(vnode, key, old, value, ns, isFileInput) {
+		if (key === "key" || key === "is" || value == null || isLifecycleMethod(key) || (old === value && !isFormAttribute(vnode, key)) && typeof value !== "object" || key === "type" && vnode.tag === "input") return
 		if (key[0] === "o" && key[1] === "n") return updateEvent(vnode, key, value)
 		if (key.slice(0, 6) === "xlink:") vnode.dom.setAttributeNS("http://www.w3.org/1999/xlink", key.slice(6), value)
 		else if (key === "style") updateStyle(vnode.dom, old, value)
@@ -740,16 +694,18 @@ module.exports = function($window) {
 				// Only do the coercion if we're actually going to check the value.
 				/* eslint-disable no-implicit-coercion */
 				//setting input[value] to same value by typing on focused element moves cursor to end in Chrome
-				if ((vnode.tag === "input" || vnode.tag === "textarea") && vnode.dom.value === "" + value && vnode.dom === activeElement()) return
+				//setting input[type=file][value] to same value causes an error to be generated if it's non-empty
+				if ((vnode.tag === "input" || vnode.tag === "textarea") && vnode.dom.value === "" + value && (isFileInput || vnode.dom === activeElement(vnode.dom))) return
 				//setting select[value] to same value while having select open blinks select dropdown in Chrome
 				if (vnode.tag === "select" && old !== null && vnode.dom.value === "" + value) return
 				//setting option[value] to same value while having select open blinks select dropdown in Chrome
 				if (vnode.tag === "option" && old !== null && vnode.dom.value === "" + value) return
+				//setting input[type=file][value] to different value is an error if it's non-empty
+				// Not ideal, but it at least works around the most common source of uncaught exceptions for now.
+				if (isFileInput && "" + value !== "") { console.error("`value` is read-only on file inputs!"); return }
 				/* eslint-enable no-implicit-coercion */
 			}
-			// If you assign an input type that is not supported by IE 11 with an assignment expression, an error will occur.
-			if (vnode.tag === "input" && key === "type") vnode.dom.setAttribute(key, value)
-			else vnode.dom[key] = value
+			vnode.dom[key] = value
 		} else {
 			if (typeof value === "boolean") {
 				if (value) vnode.dom.setAttribute(key, "")
@@ -760,14 +716,15 @@ module.exports = function($window) {
 	}
 	function removeAttr(vnode, key, old, ns) {
 		if (key === "key" || key === "is" || old == null || isLifecycleMethod(key)) return
-		if (key[0] === "o" && key[1] === "n" && !isLifecycleMethod(key)) updateEvent(vnode, key, undefined)
+		if (key[0] === "o" && key[1] === "n") updateEvent(vnode, key, undefined)
 		else if (key === "style") updateStyle(vnode.dom, old, null)
 		else if (
 			hasPropertyKey(vnode, key, ns)
 			&& key !== "className"
+			&& key !== "title" // creates "null" as title
 			&& !(key === "value" && (
 				vnode.tag === "option"
-				|| vnode.tag === "select" && vnode.dom.selectedIndex === -1 && vnode.dom === activeElement()
+				|| vnode.tag === "select" && vnode.dom.selectedIndex === -1 && vnode.dom === activeElement(vnode.dom)
 			))
 			&& !(vnode.tag === "input" && key === "type")
 		) {
@@ -792,9 +749,18 @@ module.exports = function($window) {
 		if ("selectedIndex" in attrs) setAttr(vnode, "selectedIndex", null, attrs.selectedIndex, undefined)
 	}
 	function updateAttrs(vnode, old, attrs, ns) {
+		if (old && old === attrs) {
+			console.warn("Don't reuse attrs object, use new object for every redraw, this will throw in next major")
+		}
 		if (attrs != null) {
+			// If you assign an input type that is not supported by IE 11 with an assignment expression, an error will occur.
+			//
+			// Also, the DOM does things to inputs based on the value, so it needs set first.
+			// See: https://github.com/MithrilJS/mithril.js/issues/2622
+			if (vnode.tag === "input" && attrs.type != null) vnode.dom.setAttribute("type", attrs.type)
+			var isFileInput = vnode.tag === "input" && attrs.type === "file"
 			for (var key in attrs) {
-				setAttr(vnode, key, old && old[key], attrs[key], ns)
+				setAttr(vnode, key, old && old[key], attrs[key], ns, isFileInput)
 			}
 		}
 		var val
@@ -807,7 +773,7 @@ module.exports = function($window) {
 		}
 	}
 	function isFormAttribute(vnode, attr) {
-		return attr === "value" || attr === "checked" || attr === "selectedIndex" || attr === "selected" && vnode.dom === activeElement() || vnode.tag === "option" && vnode.dom.parentNode === $doc.activeElement
+		return attr === "value" || attr === "checked" || attr === "selectedIndex" || attr === "selected" && vnode.dom === activeElement(vnode.dom) || vnode.tag === "option" && vnode.dom.parentNode === activeElement(vnode.dom)
 	}
 	function isLifecycleMethod(attr) {
 		return attr === "oninit" || attr === "oncreate" || attr === "onupdate" || attr === "onremove" || attr === "onbeforeremove" || attr === "onbeforeupdate"
@@ -836,10 +802,10 @@ module.exports = function($window) {
 			// Styles are equivalent, do nothing.
 		} else if (style == null) {
 			// New style is missing, just clear it.
-			element.style.cssText = ""
+			element.style = ""
 		} else if (typeof style !== "object") {
 			// New style is a string, let engine deal with patching.
-			element.style.cssText = style
+			element.style = style
 		} else if (old == null || typeof old !== "object") {
 			// `old` is missing or a string, `style` is an object.
 			element.style.cssText = ""
@@ -897,6 +863,7 @@ module.exports = function($window) {
 	//event
 	function updateEvent(vnode, key, value) {
 		if (vnode.events != null) {
+			vnode.events._ = currentRedraw
 			if (vnode.events[key] === value) return
 			if (value != null && (typeof value === "function" || typeof value === "object")) {
 				if (vnode.events[key] == null) vnode.dom.addEventListener(key.slice(2), vnode.events, false)
@@ -948,26 +915,34 @@ module.exports = function($window) {
 		return true
 	}
 
+	var currentDOM
+
 	return function(dom, vnodes, redraw) {
-		if (!dom) throw new TypeError("Ensure the DOM element being passed to m.route/m.mount/m.render is not undefined.")
+		if (!dom) throw new TypeError("DOM element being rendered to does not exist.")
+		if (currentDOM != null && dom.contains(currentDOM)) {
+			throw new TypeError("Node is currently being rendered to and thus is locked.")
+		}
+		var prevRedraw = currentRedraw
+		var prevDOM = currentDOM
 		var hooks = []
-		var active = activeElement()
+		var active = activeElement(dom)
 		var namespace = dom.namespaceURI
 
-		// First time rendering into a node clears it out
-		if (dom.vnodes == null) dom.textContent = ""
-
-		vnodes = Vnode.normalizeChildren(Array.isArray(vnodes) ? vnodes : [vnodes])
-		var prevRedraw = currentRedraw
+		currentDOM = dom
+		currentRedraw = typeof redraw === "function" ? redraw : undefined
+		currentRender = {}
 		try {
-			currentRedraw = typeof redraw === "function" ? redraw : undefined
+			// First time rendering into a node clears it out
+			if (dom.vnodes == null) dom.textContent = ""
+			vnodes = Vnode.normalizeChildren(Array.isArray(vnodes) ? vnodes : [vnodes])
 			updateNodes(dom, dom.vnodes, vnodes, hooks, null, namespace === "http://www.w3.org/1999/xhtml" ? undefined : namespace)
+			dom.vnodes = vnodes
+			// `document.activeElement` can return null: https://html.spec.whatwg.org/multipage/interaction.html#dom-document-activeelement
+			if (active != null && activeElement(dom) !== active && typeof active.focus === "function") active.focus()
+			for (var i = 0; i < hooks.length; i++) hooks[i]()
 		} finally {
 			currentRedraw = prevRedraw
+			currentDOM = prevDOM
 		}
-		dom.vnodes = vnodes
-		// `document.activeElement` can return null: https://html.spec.whatwg.org/multipage/interaction.html#dom-document-activeelement
-		if (active != null && activeElement() !== active && typeof active.focus === "function") active.focus()
-		for (var i = 0; i < hooks.length; i++) hooks[i]()
 	}
 }

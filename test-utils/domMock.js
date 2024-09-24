@@ -99,12 +99,15 @@ module.exports = function(options) {
 		}
 	}
 	function removeChild(child) {
+		if (child == null || typeof child !== "object" || !("nodeType" in child)) {
+			throw new TypeError("Failed to execute removeChild, parameter is not of type 'Node'")
+		}
 		var index = this.childNodes.indexOf(child)
 		if (index > -1) {
 			this.childNodes.splice(index, 1)
 			child.parentNode = null
 		}
-		else throw new TypeError("Failed to execute 'removeChild'")
+		else throw new TypeError("Failed to execute 'removeChild', child not found in parent")
 	}
 	function insertBefore(child, reference) {
 		var ancestor = this
@@ -304,6 +307,14 @@ module.exports = function(options) {
 					parentNode: null,
 					childNodes: [],
 					attributes: {},
+					ownerDocument: $window.document,
+					contains: function(child) {
+						while (child != null) {
+							if (child === this) return true
+							child = child.parentNode
+						}
+						return false
+					},
 					get firstChild() {
 						return this.childNodes[0] || null
 					},
@@ -313,10 +324,12 @@ module.exports = function(options) {
 						if (index < 0) throw new TypeError("Parent's childNodes is out of sync")
 						return this.parentNode.childNodes[index + 1] || null
 					},
+					// eslint-disable-next-line accessor-pairs
 					set textContent(value) {
 						this.childNodes = []
 						if (value !== "") appendChild.call(this, $window.document.createTextNode(value))
 					},
+					// eslint-disable-next-line accessor-pairs
 					set innerHTML(value) {
 						var voidElements = ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"]
 						while (this.firstChild) removeChild.call(this, this.firstChild)
@@ -334,9 +347,8 @@ module.exports = function(options) {
 					get style() {
 						return style
 					},
-					set style(_){
-						// https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/style#Setting_style
-						throw new Error("setting element.style is not portable")
+					set style(value){
+						this.style.cssText = value
 					},
 					get className() {
 						return this.attributes["class"] ? this.attributes["class"].value : ""
@@ -429,8 +441,6 @@ module.exports = function(options) {
 									return
 								}
 							}
-						} catch(e) {
-							throw e
 						} finally {
 							e.eventPhase = 0
 							if (!prevented) {
@@ -455,7 +465,7 @@ module.exports = function(options) {
 								if (!this.hasAttribute("href")) return ""
 								// HACK: if it's valid already, there's nothing to implement.
 								var value = this.attributes.href.value
-								if (validURLRegex.test(value)) return value
+								if (validURLRegex.test(encodeURI(value))) return value
 							}
 							return "[FIXME implement]"
 						},
@@ -486,6 +496,37 @@ module.exports = function(options) {
 							return value
 						},
 						set: valueSetter,
+						enumerable: true,
+					})
+					Object.defineProperty(element, "valueAsDate", {
+						get: function() {
+							if (this.getAttribute("type") !== "date") return null
+							return new Date(value).getTime()
+						},
+						set: function(v) {
+							if (this.getAttribute("type") !== "date") throw new Error("invalid state")
+							var time = new Date(v).getTime()
+							valueSetter(isNaN(time) ? "" : new Date(time).toUTCString())
+						},
+						enumerable: true,
+					})
+					Object.defineProperty(element, "valueAsNumber", {
+						get: function() {
+							switch (this.getAttribute("type")) {
+								case "date": return new Date(value).getTime()
+								case "number": return new Date(value).getTime()
+								default: return NaN
+							}
+						},
+						set: function(v) {
+							v = Number(v)
+							if (!isNaN(v) && !isFinite(v)) throw new TypeError("infinite value")
+							switch (this.getAttribute("type")) {
+								case "date": valueSetter(isNaN(v) ? "" : new Date(v).toUTCString()); break;
+								case "number": valueSetter(String(value)); break;
+								default: throw new Error("invalid state")
+							}
+						},
 						enumerable: true,
 					})
 
@@ -677,6 +718,7 @@ module.exports = function(options) {
 			},
 			createDocumentFragment: function() {
 				return {
+					ownerDocument: $window.document,
 					nodeType: 11,
 					nodeName: "#document-fragment",
 					appendChild: appendChild,
@@ -698,6 +740,7 @@ module.exports = function(options) {
 			get activeElement() {return activeElement},
 		},
 	}
+	$window.document.defaultView = $window
 	$window.document.documentElement = $window.document.createElement("html")
 	appendChild.call($window.document.documentElement, $window.document.createElement("head"))
 	$window.document.body = $window.document.createElement("body")

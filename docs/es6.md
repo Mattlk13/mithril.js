@@ -1,3 +1,6 @@
+<!--meta-description
+Approaches you can use to integrate ES6 into your Mithril.js-based apps, including technology and usability suggestions
+-->
 # ES6+ on legacy browsers
 
 - [Setup](#setup)
@@ -5,7 +8,7 @@
 
 ---
 
-Mithril is written in ES5, but it's fully compatible with ES6 and later as well. All modern browsers do support it natively, up to and even including native module syntax. (They don't support Node's magic module resolution, so you can't use `import * as _ from "lodash-es"` or similar. They just support relative and URL paths.) And so you can feel free to use [arrow functions for your closure components and classes for your class components](components.md).
+Mithril.js is written in ES5, but it's fully compatible with ES6 and later as well. All modern browsers do support it natively, up to and even including native module syntax. (They don't support Node's magic module resolution, so you can't use `import * as _ from "lodash-es"` or similar. They just support relative and URL paths.) And so you can feel free to use [arrow functions for your closure components and classes for your class components](components.md).
 
 But, if like many of us, you still need to support older browsers like Internet Explorer, you'll need to transpile that down to ES5, and this is what this page is all about, using [Babel](https://babeljs.io) to make modern ES6+ code work on older browsers.
 
@@ -19,7 +22,7 @@ Once you've got that downloaded, open a terminal and run these commands:
 
 ```bash
 # Replace this with the actual path to your project. Quote it if it has spaces,
-# and single-quote it if you're on Linux/Mac and it contains a `$` anywhere.
+# and single-quote it if you're on Linux/Mac and it contains a `$$` anywhere.
 cd "/path/to/your/project"
 
 # If you have a `package.json` there already, skip this command.

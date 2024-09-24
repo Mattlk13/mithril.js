@@ -1,6 +1,6 @@
 "use strict"
 
-var o = require("../../ospec/ospec")
+var o = require("ospec")
 var parsePathname = require("../../pathname/parse")
 
 o.spec("parsePathname", function() {
@@ -112,7 +112,7 @@ o.spec("parsePathname", function() {
 	o("parses route + query, ignores hash with lots of junk slashes", function() {
 		var data = parsePathname("//route/////foo//?a=1&b=2#c=3&d=4")
 		o(data).deepEquals({
-			path: "/route/foo",
+			path: "/route/foo/",
 			params: {a: "1", b: "2"}
 		})
 	})

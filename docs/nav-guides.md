@@ -19,12 +19,12 @@
 	- [Keys](keys.md)
 	- [Autoredraw system](autoredraw.md)
 - Social
-	- [Mithril Jobs](https://github.com/MithrilJS/mithril.js/wiki/JOBS)
+	- [Mithril.js Jobs](https://github.com/MithrilJS/mithril.js/wiki/JOBS)
 	- [How to contribute](contributing.md)
 	- [Credits](credits.md)
 	- [Code of Conduct](code-of-conduct.md)
 - Misc
 	- [Framework comparison](framework-comparison.md)
-	- [Change log/Migration](change-log.md)
-	- [v1 Documentation](https://mithril.js.org/archive/v1.1.6/)
+	- [Change log/Migration](changelog.md)
+	- [v1 Documentation](https://mithril.js.org/archive/v1.1.7/)
 	- [v0.2 Documentation](https://mithril.js.org/archive/v0.2.5/)
